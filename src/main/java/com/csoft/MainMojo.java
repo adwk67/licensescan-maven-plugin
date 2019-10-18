@@ -56,6 +56,9 @@ public class MainMojo extends AbstractMojo {
     @Parameter(property = "overruleOnNotBlacklisted", defaultValue = "true")
     private boolean overruleOnNotBlacklisted;
 
+    @Parameter(property = "exclusions")
+    private List<String> exclusions;
+
     private final Map<String, List<String>> blacklistedMap = new HashMap<String, List<String>>();
 
     public MainMojo() {
@@ -155,71 +158,79 @@ public class MainMojo extends AbstractMojo {
 
         try {
             for (Artifact artifact : transitiveDependencies) {
-                String artifactLabel = artifact.getGroupId() + ":" + artifact.getArtifactId() + ":"
-                        + artifact.getVersion() + ":" + artifact.getScope();
+                String groupArtifact = artifact.getGroupId() + ":" + artifact.getArtifactId();
+                String artifactLabel = groupArtifact + ":" + artifact.getVersion() + ":" + artifact.getScope();
                 getLog().info(" - artifact " + artifactLabel);
                 buildingRequest.setProject(null);
-                MavenProject mavenProject = projectBuilder.build(artifact, buildingRequest).getProject();
-                /*
-                 * each non-blacklisted license will be treated as permissive
-                 */
-                boolean permissiveLicenseFound = false;
-                /*
-                 * temporary map to hold blacklist information per artifact, as we can ignore it
-                 * or retain it, depending on the configuration
-                 */
-                Map<String, List<String>> blacklistedForArtifact = new HashMap<String, List<String>>();
-
-                if (printLicenses && mavenProject.getLicenses().isEmpty()) {
-                    getLog().info("   with license: n/a");
-                } else {
+                if (!isExcluded(groupArtifact)) {
+                    MavenProject mavenProject = projectBuilder.build(artifact, buildingRequest).getProject();
                     /*
-                     * if overruleOnNotBlacklisted=true, then, for artifacts that are released under
-                     * multiple licenses, the detection of a single non-blacklisted license will be
-                     * deemed sufficient to allow this artifact
+                     * each non-blacklisted license will be treated as permissive
                      */
-                    for (License license : mavenProject.getLicenses()) {
-                        if (printLicenses) {
-                            getLog().info("   with license: " + license.getName());
-                        }
-                        Match forbiddenMatch = isForbiddenLicense(license);
+                    boolean permissiveLicenseFound = false;
+                    /*
+                     * temporary map to hold blacklist information per artifact, as we can ignore it
+                     * or retain it, depending on the configuration
+                     */
+                    Map<String, List<String>> blacklistedForArtifact = new HashMap<String, List<String>>();
 
-                        if (forbiddenMatch.isMatch) {
-                            addToBlacklistMap(artifactLabel,
-                                    this.overruleOnNotBlacklisted ? blacklistedForArtifact : blacklistedMap,
-                                    forbiddenMatch);
-                        } else {
-                            if (this.overruleOnNotBlacklisted) {
+                    if (printLicenses && mavenProject.getLicenses().isEmpty()) {
+                        getLog().info("   with license: n/a");
+                    } else {
+                        /*
+                         * if overruleOnNotBlacklisted=true, then, for artifacts that are released under
+                         * multiple licenses, the detection of a single non-blacklisted license will be
+                         * deemed sufficient to allow this artifact
+                         */
+                        for (License license : mavenProject.getLicenses()) {
+                            if (printLicenses) {
+                                getLog().info("   with license: " + license.getName());
+                            }
+                            Match forbiddenMatch = isForbiddenLicense(license);
+
+                            if (forbiddenMatch.isMatch) {
+                                addToBlacklistMap(artifactLabel,
+                                        this.overruleOnNotBlacklisted ? blacklistedForArtifact : blacklistedMap,
+                                        forbiddenMatch);
+                            } else {
+                                if (this.overruleOnNotBlacklisted) {
+                                    /*
+                                     * non-blacklisted license has been detected
+                                     */
+                                    permissiveLicenseFound = true;
+                                }
+                            }
+                        }
+                        if (this.overruleOnNotBlacklisted) {
+                            if (permissiveLicenseFound) {
                                 /*
-                                 * non-blacklisted license has been detected
+                                 * ignore blacklisted licenses as we have at least one that is allowed
                                  */
-                                permissiveLicenseFound = true;
+                                if (isMapNonTrivial(blacklistedForArtifact)) {
+                                    getLog().info("   blacklisting has been overridden");
+                                }
+                            } else {
+                                /*
+                                 * nothing should be ignored so add all blacklisted licenses back in to main map
+                                 */
+                                for (Entry<String, List<String>> entry : blacklistedForArtifact.entrySet()) {
+                                    List<String> array = blacklistedForArtifact.get(entry.getKey());
+                                    blacklistedMap.put(entry.getKey(), array);
+                                }
                             }
                         }
                     }
-                    if (this.overruleOnNotBlacklisted) {
-                        if (permissiveLicenseFound) {
-                            /*
-                             * ignore blacklisted licenses as we have at least one that is allowed
-                             */
-                            if (isMapNonTrivial(blacklistedForArtifact)) {
-                                getLog().info("   blacklisting has been overridden");
-                            }
-                        } else {
-                            /*
-                             * nothing should be ignored so add all blacklisted licenses back in to main map
-                             */
-                            for (Entry<String, List<String>> entry : blacklistedForArtifact.entrySet()) {
-                                List<String> array = blacklistedForArtifact.get(entry.getKey());
-                                blacklistedMap.put(entry.getKey(), array);
-                            }
-                        }
-                    }
+                } else {
+                    getLog().info("   excluding: " + groupArtifact);
                 }
             }
         } catch (ProjectBuildingException e) {
             throw new MojoExecutionException("Error while building project", e);
         }
+    }
+
+    private boolean isExcluded(String groupArtifact) {
+        return this.exclusions != null && !this.exclusions.isEmpty() && this.exclusions.contains(groupArtifact);
     }
 
     private boolean isMapNonTrivial(Map<String, List<String>> blacklistedMap) {

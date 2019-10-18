@@ -33,9 +33,9 @@
     <build>
         <plugins>
             <plugin>
-                <groupId>com.github.carlomorelli</groupId>
+                <groupId>com.github.adwk67</groupId>
                 <artifactId>licensescan-maven-plugin</artifactId>
-                <version>2.1</version>
+                <version>2.2</version>
                 <configuration>
                     <printLicenses>true</printLicenses>
                     <blacklistedLicenses>
@@ -43,6 +43,9 @@
                         <license>Banned License v2</license>
                     </blacklistedLicenses>
                     <failBuildOnBlacklisted>true</failBuildOnBlacklisted>
+                    <exclusions>
+                        <exclusion>org.openclover:grover</exclusion>
+                    </exclusions>
                 </configuration>
                 <executions>
                     <execution>
